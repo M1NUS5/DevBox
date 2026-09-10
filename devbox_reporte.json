@@ -1,0 +1,122 @@
+[
+  {
+    "id": "python",
+    "nombre": "Python",
+    "categoria": "lenguaje",
+    "instalado": true,
+    "version": "3.12.13",
+    "ruta": "/Users/jona/Desktop/DevBox/.venv/bin/python3"
+  },
+  {
+    "id": "node",
+    "nombre": "Node.js",
+    "categoria": "lenguaje",
+    "instalado": true,
+    "version": "26.7.0",
+    "ruta": "/opt/homebrew/bin/node"
+  },
+  {
+    "id": "java",
+    "nombre": "Java",
+    "categoria": "lenguaje",
+    "instalado": true,
+    "version": "1.8.0_503",
+    "ruta": "/usr/bin/java"
+  },
+  {
+    "id": "kotlin",
+    "nombre": "Kotlin",
+    "categoria": "lenguaje",
+    "instalado": false,
+    "version": null,
+    "ruta": null
+  },
+  {
+    "id": "go",
+    "nombre": "Go",
+    "categoria": "lenguaje",
+    "instalado": false,
+    "version": null,
+    "ruta": null
+  },
+  {
+    "id": "rust",
+    "nombre": "Rust",
+    "categoria": "lenguaje",
+    "instalado": false,
+    "version": null,
+    "ruta": null
+  },
+  {
+    "id": "php",
+    "nombre": "PHP",
+    "categoria": "lenguaje",
+    "instalado": false,
+    "version": null,
+    "ruta": null
+  },
+  {
+    "id": "ruby",
+    "nombre": "Ruby",
+    "categoria": "lenguaje",
+    "instalado": true,
+    "version": "2.6.10",
+    "ruta": "/usr/bin/ruby"
+  },
+  {
+    "id": "dotnet",
+    "nombre": ".NET",
+    "categoria": "lenguaje",
+    "instalado": false,
+    "version": null,
+    "ruta": null
+  },
+  {
+    "id": "swift",
+    "nombre": "Swift",
+    "categoria": "lenguaje",
+    "instalado": true,
+    "version": "6.3.3",
+    "ruta": "/usr/bin/swift"
+  },
+  {
+    "id": "cpp",
+    "nombre": "C/C++ (clang)",
+    "categoria": "lenguaje",
+    "instalado": true,
+    "version": "21.0.0",
+    "ruta": "/usr/bin/clang"
+  },
+  {
+    "id": "git",
+    "nombre": "Git",
+    "categoria": "herramienta",
+    "instalado": true,
+    "version": "2.50.1",
+    "ruta": "/usr/bin/git"
+  },
+  {
+    "id": "docker",
+    "nombre": "Docker",
+    "categoria": "herramienta",
+    "instalado": true,
+    "version": "29.7.2",
+    "ruta": "/usr/local/bin/docker"
+  },
+  {
+    "id": "npm",
+    "nombre": "npm",
+    "categoria": "herramienta",
+    "instalado": true,
+    "version": "11.19.0",
+    "ruta": "/opt/homebrew/bin/npm"
+  },
+  {
+    "id": "pip",
+    "nombre": "pip",
+    "categoria": "herramienta",
+    "instalado": true,
+    "version": "26.1.2",
+    "ruta": "/Users/jona/Desktop/DevBox/.venv/bin/pip3"
+  }
+]
