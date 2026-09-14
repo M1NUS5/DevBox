@@ -20,10 +20,12 @@ analizar_proyecto = _analizador.analizar_proyecto
 
 _dev_ai = import_module("core.dev_ai")
 explicar_error = _dev_ai.explicar_error
+generar_codigo = _dev_ai.generar_codigo
 corregir_codigo = _dev_ai.corregir_codigo
 revisar_archivo = _dev_ai.revisar_archivo
 generar_vista_previa = _dev_ai.generar_vista_previa
 aplicar_correccion = _dev_ai.aplicar_correccion
+extraer_bloque_codigo = _dev_ai.extraer_bloque_codigo
 analizar_proyecto_con_ia = _dev_ai.analizar_proyecto_con_ia
 esta_disponible_ia = _dev_ai.esta_disponible
 listar_archivos_proyecto = _dev_ai.listar_archivos_proyecto
@@ -53,6 +55,8 @@ class DevBoxApp(ctk.CTk):
         self._ultimo_proyecto = None
         self._carpeta_devai = None
         self._info_aplicable = None
+        self._ruta_codigo_cargado = None
+        self._ultimo_codigo_generado = None
 
         self._crear_sidebar()
         self._crear_area_contenido()
@@ -594,12 +598,27 @@ class DevBoxApp(ctk.CTk):
         self.caja_error = ctk.CTkTextbox(self.contenido, height=90)
         self.caja_error.grid(row=3, column=0, padx=30, pady=(0, 10), sticky="ew")
 
+        fila_label_codigo = ctk.CTkFrame(self.contenido, fg_color="transparent")
+        fila_label_codigo.grid(row=4, column=0, padx=30, pady=(0, 4), sticky="ew")
+        fila_label_codigo.grid_columnconfigure(0, weight=1)
+
         ctk.CTkLabel(
-            self.contenido,
+            fila_label_codigo,
             text="Código relacionado (opcional si solo quieres explicar un error):",
             text_color="#a0a0a0",
             font=("Segoe UI", 12)
-        ).grid(row=4, column=0, padx=30, pady=(0, 4), sticky="w")
+        ).grid(row=0, column=0, sticky="w")
+
+        self.btn_cargar_archivo_codigo = ctk.CTkButton(
+            fila_label_codigo,
+            text="📂 Cargar archivo",
+            width=140,
+            height=24,
+            fg_color="#3a3a3a",
+            hover_color="#4a4a4a",
+            command=self._cargar_archivo_en_caja_codigo
+        )
+        self.btn_cargar_archivo_codigo.grid(row=0, column=1, sticky="e")
 
         self.caja_codigo = ctk.CTkTextbox(self.contenido, height=110)
         self.caja_codigo.grid(row=5, column=0, padx=30, pady=(0, 10), sticky="ew")
@@ -632,6 +651,38 @@ class DevBoxApp(ctk.CTk):
         )
         self.btn_revisar_archivo.grid(row=0, column=2)
 
+        ctk.CTkLabel(
+            self.contenido,
+            text="✨ Generar código nuevo desde una descripción:",
+            text_color="#a0a0a0",
+            font=("Segoe UI", 12)
+        ).grid(row=7, column=0, padx=30, pady=(6, 4), sticky="w")
+
+        self.caja_descripcion_generar = ctk.CTkTextbox(self.contenido, height=80)
+        self.caja_descripcion_generar.grid(row=8, column=0, padx=30, pady=(0, 10), sticky="ew")
+
+        fila_botones_generar = ctk.CTkFrame(self.contenido, fg_color="transparent")
+        fila_botones_generar.grid(row=9, column=0, padx=30, pady=(0, 16), sticky="w")
+
+        self.btn_generar_codigo = ctk.CTkButton(
+            fila_botones_generar,
+            text="✨  Generar código",
+            fg_color="#5b3a8f",
+            hover_color="#6d46a8",
+            command=self._generar_codigo_desde_descripcion
+        )
+        self.btn_generar_codigo.grid(row=0, column=0, padx=(0, 8))
+
+        self.btn_guardar_codigo_generado = ctk.CTkButton(
+            fila_botones_generar,
+            text="💾  Guardar como archivo",
+            fg_color="#1f7a3d",
+            hover_color="#25914a",
+            command=self._guardar_codigo_generado
+        )
+        self.btn_guardar_codigo_generado.grid(row=0, column=1)
+        self.btn_guardar_codigo_generado.grid_remove()
+
         self.btn_aplicar_correccion = ctk.CTkButton(
             self.contenido,
             text="✅  Aplicar corrección al archivo",
@@ -639,14 +690,14 @@ class DevBoxApp(ctk.CTk):
             hover_color="#25914a",
             command=self._aplicar_correccion_al_archivo
         )
-        self.btn_aplicar_correccion.grid(row=7, column=0, padx=30, pady=(0, 12), sticky="w")
+        self.btn_aplicar_correccion.grid(row=10, column=0, padx=30, pady=(0, 12), sticky="w")
         self.btn_aplicar_correccion.grid_remove()
 
         self.caja_respuesta_error = ctk.CTkTextbox(
             self.contenido, fg_color="#1a1a1a"
         )
-        self.caja_respuesta_error.grid(row=8, column=0, padx=30, pady=(0, 20), sticky="nsew")
-        self.contenido.grid_rowconfigure(8, weight=1)
+        self.caja_respuesta_error.grid(row=11, column=0, padx=30, pady=(0, 20), sticky="nsew")
+        self.contenido.grid_rowconfigure(11, weight=1)
         self.caja_respuesta_error.insert("1.0", "Aquí aparecerá la respuesta...")
         self.caja_respuesta_error.configure(state="disabled")
 
@@ -662,6 +713,28 @@ class DevBoxApp(ctk.CTk):
 
         self._carpeta_devai = ruta
         self.lbl_carpeta_devai.configure(text=f"📁 {ruta}")
+
+    def _cargar_archivo_en_caja_codigo(self):
+        ruta = filedialog.askopenfilename(
+            title="Selecciona el archivo a corregir",
+            filetypes=[
+                ("Archivos de código", "*.py *.js *.ts *.java *.go *.rs *.php *.rb *.pl *.pm *.c *.cpp *.cc *.cxx"),
+                ("Todos los archivos", "*.*"),
+            ]
+        )
+
+        if not ruta:
+            return
+
+        try:
+            contenido = Path(ruta).read_text(encoding="utf-8")
+        except OSError as error:
+            messagebox.showerror("DevBox", f"No se pudo leer el archivo:\n{error}")
+            return
+
+        self.caja_codigo.delete("1.0", "end")
+        self.caja_codigo.insert("1.0", contenido)
+        self._ruta_codigo_cargado = ruta
 
     def _revisar_estado_ollama(self):
         disponible = esta_disponible_ia()
@@ -698,6 +771,7 @@ class DevBoxApp(ctk.CTk):
             return
 
         texto_error = self.caja_error.get("1.0", "end").strip()
+        ruta_cargada = self._ruta_codigo_cargado
 
         self._deshabilitar_botones_ia("🛠️  Corrigiendo...")
 
@@ -713,8 +787,27 @@ class DevBoxApp(ctk.CTk):
                 )
             except OllamaNoDisponible as error:
                 respuesta = f"⚠️ {error}"
+                self.after(0, lambda: self._mostrar_respuesta_error(respuesta))
+                return
 
-            self.after(0, lambda: self._mostrar_respuesta_error(respuesta))
+            # Si el código vino de un archivo cargado (no solo pegado a
+            # mano) y la IA devolvió un bloque de código reconocible,
+            # se puede ofrecer aplicar la corrección directo a ese
+            # archivo -reutilizando la misma vista previa + respaldo
+            # que ya usa "Revisar archivo completo". El rango cubre
+            # el archivo completo porque corregir_codigo() siempre
+            # devuelve el fragmento entero ya corregido, no una línea
+            # puntual.
+            info_aplicable = None
+
+            if ruta_cargada and extraer_bloque_codigo(respuesta) is not None:
+                info_aplicable = {
+                    "ruta": ruta_cargada,
+                    "linea_inicio": 1,
+                    "linea_fin": len(codigo.splitlines()),
+                }
+
+            self.after(0, lambda: self._mostrar_respuesta_error(respuesta, info_aplicable))
 
         threading.Thread(target=tarea, daemon=True).start()
 
@@ -722,7 +815,9 @@ class DevBoxApp(ctk.CTk):
         self.btn_analizar_error.configure(state="disabled")
         self.btn_corregir_codigo.configure(state="disabled")
         self.btn_revisar_archivo.configure(state="disabled")
+        self.btn_generar_codigo.configure(state="disabled")
         self._ocultar_boton_aplicar()
+        self.btn_guardar_codigo_generado.grid_remove()
 
         self.caja_respuesta_error.configure(state="normal")
         self.caja_respuesta_error.delete("1.0", "end")
@@ -737,6 +832,7 @@ class DevBoxApp(ctk.CTk):
         self.btn_analizar_error.configure(state="normal", text="🤖  Explicar error")
         self.btn_corregir_codigo.configure(state="normal", text="🛠️  Corregir código")
         self.btn_revisar_archivo.configure(state="normal", text="📄  Revisar archivo completo")
+        self.btn_generar_codigo.configure(state="normal", text="✨  Generar código")
 
         self._info_aplicable = info_aplicable
 
@@ -745,11 +841,70 @@ class DevBoxApp(ctk.CTk):
         else:
             self._ocultar_boton_aplicar()
 
+    def _generar_codigo_desde_descripcion(self):
+        descripcion = self.caja_descripcion_generar.get("1.0", "end").strip()
+
+        if not descripcion:
+            messagebox.showinfo("DevBox", "Describe primero qué código quieres que genere.")
+            return
+
+        self._deshabilitar_botones_ia("✨  Generando...")
+
+        carpeta = self._carpeta_devai
+
+        def tarea():
+            try:
+                archivos = listar_archivos_proyecto(carpeta) if carpeta else None
+                respuesta = generar_codigo(descripcion, archivos_proyecto=archivos)
+            except OllamaNoDisponible as error:
+                respuesta = f"⚠️ {error}"
+
+            self.after(0, lambda: self._mostrar_respuesta_generada(respuesta))
+
+        threading.Thread(target=tarea, daemon=True).start()
+
+    def _mostrar_respuesta_generada(self, texto: str):
+        self.caja_respuesta_error.configure(state="normal")
+        self.caja_respuesta_error.delete("1.0", "end")
+        self.caja_respuesta_error.insert("1.0", texto)
+        self.caja_respuesta_error.configure(state="disabled")
+        self.btn_analizar_error.configure(state="normal", text="🤖  Explicar error")
+        self.btn_corregir_codigo.configure(state="normal", text="🛠️  Corregir código")
+        self.btn_revisar_archivo.configure(state="normal", text="📄  Revisar archivo completo")
+        self.btn_generar_codigo.configure(state="normal", text="✨  Generar código")
+
+        self._ultimo_codigo_generado = extraer_bloque_codigo(texto)
+
+        if self._ultimo_codigo_generado is not None:
+            self.btn_guardar_codigo_generado.grid()
+        else:
+            self.btn_guardar_codigo_generado.grid_remove()
+
+    def _guardar_codigo_generado(self):
+        if not self._ultimo_codigo_generado:
+            return
+
+        ruta = filedialog.asksaveasfilename(
+            title="Guardar código generado como...",
+            filetypes=[("Todos los archivos", "*.*")]
+        )
+
+        if not ruta:
+            return
+
+        try:
+            Path(ruta).write_text(self._ultimo_codigo_generado + "\n", encoding="utf-8")
+        except OSError as error:
+            messagebox.showerror("DevBox", f"No se pudo guardar el archivo:\n{error}")
+            return
+
+        messagebox.showinfo("DevBox", f"Archivo guardado en:\n{ruta}")
+
     def _revisar_archivo_completo(self):
         ruta = filedialog.askopenfilename(
             title="Selecciona el archivo a revisar",
             filetypes=[
-                ("Archivos de código", "*.py *.js *.ts *.java *.go *.rs *.php *.rb"),
+                ("Archivos de código", "*.py *.js *.ts *.java *.go *.rs *.php *.rb *.pl *.pm *.c *.cpp *.cc *.cxx"),
                 ("Todos los archivos", "*.*"),
             ]
         )
