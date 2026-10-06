@@ -7,9 +7,11 @@ la terminal y cómo extraer su versión, para poder decirle al
 usuario exactamente qué tiene disponible ahora mismo.
 """
 
+import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 
 
@@ -21,35 +23,55 @@ class ResultadoDeteccion:
     instalado: bool
     version: str | None
     ruta: str | None
-    icono: str = "🔧"
+    icono: str | None = None
 
 
-# Icono representativo de cada herramienta, para que el Dashboard
-# se vea más claro de un vistazo que solo un punto de color.
+# Carpeta con los logos reales (PNG) de cada lenguaje/herramienta,
+# en vez de emojis: se ven consistentes entre sistemas operativos.
+# Empaquetado con PyInstaller, __file__ ya no apunta a una ruta real
+# del proyecto -en ese caso los datos empaquetados ("datas" del
+# .spec) viven junto a sys._MEIPASS.
+if getattr(sys, "frozen", False):
+    _DIR_BASE = sys._MEIPASS
+else:
+    _DIR_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+_DIR_ICONOS = os.path.join(_DIR_BASE, "assets", "icons")
+
 _ICONOS = {
-    "python": "🐍",
-    "node": "🟨",
-    "java": "☕",
-    "kotlin": "🟣",
-    "go": "🐹",
-    "rust": "🦀",
-    "php": "🐘",
-    "ruby": "💎",
-    "dotnet": "#️⃣",
-    "swift": "🐦",
-    "cpp": "⚡",
-    "dart": "🎯",
-    "perl": "🐪",
-    "git": "🌱",
-    "docker": "🐳",
-    "npm": "📦",
-    "pip": "📦",
-    "brew": "🍺",
-    "vscode": "🧩",
-    "maven": "🪶",
-    "yarn": "🧶",
-    "cmake": "🛠️",
+    "python": "python.png",
+    "node": "node.png",
+    "java": "java.png",
+    "kotlin": "kotlin.png",
+    "go": "go.png",
+    "rust": "rust.png",
+    "php": "php.png",
+    "ruby": "ruby.png",
+    "dotnet": "dotnet.png",
+    "swift": "swift.png",
+    "cpp": "cpp.png",
+    "dart": "dart.png",
+    "perl": "perl.png",
+    "git": "git.png",
+    "docker": "docker.png",
+    "npm": "npm.png",
+    "pip": "pip.png",
+    "brew": "brew.png",
+    "vscode": "vscode.png",
+    "maven": "maven.png",
+    "yarn": "yarn.png",
+    "cmake": "cmake.png",
 }
+
+
+def ruta_icono(id_: str) -> str | None:
+    """Ruta absoluta al logo de la herramienta, o None si no hay archivo."""
+    nombre_archivo = _ICONOS.get(id_)
+    if not nombre_archivo:
+        return None
+
+    ruta = os.path.join(_DIR_ICONOS, nombre_archivo)
+    return ruta if os.path.isfile(ruta) else None
 
 
 # Cada tupla es: (id, nombre visible, categoría, comando ejecutable,
@@ -88,7 +110,7 @@ def _detectar_uno(
     arg_version: str,
     patron_version: str
 ) -> ResultadoDeteccion:
-    icono = _ICONOS.get(id_, "🔧")
+    icono = ruta_icono(id_)
     ruta = shutil.which(comando)
 
     if ruta is None:

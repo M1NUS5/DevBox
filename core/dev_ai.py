@@ -18,8 +18,9 @@ from pathlib import Path
 
 
 URL_OLLAMA = "http://localhost:11434/api/generate"
+URL_OLLAMA_CHAT = "http://localhost:11434/api/chat"
 MODELO_POR_DEFECTO = "qwen2.5-coder:7b"
-TIMEOUT_SEGUNDOS = 120
+TIMEOUT_SEGUNDOS = 240
 
 
 class OllamaNoDisponible(Exception):
@@ -77,213 +78,390 @@ def _consultar(prompt: str, modelo: str = MODELO_POR_DEFECTO, num_ctx: int | Non
         ) from error
 
 
-def explicar_error(texto_error: str, archivos_proyecto: list[str] | None = None) -> str:
+def _consultar_chat(mensajes: list[dict], modelo: str = MODELO_POR_DEFECTO, num_ctx: int = 8192) -> str:
     """
-    Recibe un traceback/error pegado por el usuario y devuelve una
-    explicación en español, con causa probable y solución sugerida.
-
-    Si se pasa 'archivos_proyecto' (una lista de rutas relativas de
-    archivos que sí existen en el proyecto), el modelo puede
-    distinguir mejor entre un módulo local que falta copiar y un
-    paquete de terceros que falta instalar con pip.
+    Como _consultar(), pero habla con /api/chat en vez de /api/generate:
+    manda una lista de mensajes {"role", "content"} (system/user/
+    assistant) en vez de un solo prompt, así Ollama mantiene el
+    contexto de toda la conversación -necesario para que el chat de
+    DevAI recuerde lo que se dijo en turnos anteriores.
     """
-    contexto_archivos = ""
+    cuerpo = {
+        "model": modelo,
+        "messages": mensajes,
+        "stream": False,
+        "options": {"temperature": 0.2, "num_ctx": num_ctx},
+    }
 
-    if archivos_proyecto:
-        muestra = "\n".join(f"- {archivo}" for archivo in archivos_proyecto[:150])
-        contexto_archivos = f"""
-Estos son los archivos que SÍ existen actualmente en la carpeta del
-proyecto del usuario (úsalos para distinguir si un módulo faltante
-es un archivo local que no se copió, o una librería de terceros que
-falta instalar con pip):
+    cuerpo = json.dumps(cuerpo).encode("utf-8")
 
-{muestra}
-"""
+    peticion = urllib.request.Request(
+        URL_OLLAMA_CHAT,
+        data=cuerpo,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
 
-    prompt = f"""Eres un asistente de programación integrado en una
-herramienta de escritorio llamada DevBox. Un desarrollador te pegó
-el siguiente texto en la casilla de "error".
+    try:
+        with urllib.request.urlopen(peticion, timeout=TIMEOUT_SEGUNDOS) as respuesta:
+            datos = json.loads(respuesta.read().decode("utf-8"))
+            return datos.get("message", {}).get("content", "").strip()
 
-Antes que nada, revisa si ese texto es realmente un error o
-traceback real (contiene cosas como "Traceback", "Error:",
-"Exception", una pila de llamadas, un mensaje real de la terminal,
-etc.). Si en cambio es una descripción de un comportamiento
-incorrecto SIN ningún error real (por ejemplo "mi función devuelve
-el resultado equivocado" o "el programa corre pero hace algo raro"),
-NO inventes un "Tipo de error" ni una causa falsa -eso sería peor
-que no responder nada. En ese caso responde ÚNICAMENTE con este
-texto, sin agregar nada más:
+    except urllib.error.URLError as error:
+        raise OllamaNoDisponible(
+            "No se pudo conectar con Ollama. Verifica que esté corriendo "
+            "('brew services start ollama') y que hayas descargado el "
+            f"modelo ('ollama pull {modelo}')."
+        ) from error
 
-"Esto no parece un error o traceback real -suena más bien a un
-comportamiento incorrecto (el programa corre pero no hace lo
-esperado). Para este tipo de caso usa mejor el botón 'Corregir
-código' y pega ahí el fragmento que sospechas, así la IA revisa la
-lógica en vez de intentar explicar un error que no existe."
-
-Si SÍ es un error/traceback real, ignora todo lo anterior y responde
-en español, de forma breve y clara, con este formato exacto:
-
-Tipo de error: (una línea)
-Causa probable: (1-2 líneas)
-Solución sugerida: (pasos concretos, numerados si aplica)
-
-Antes de sugerir "pip install <nombre>", revisa primero si ese
-nombre aparece en la lista de archivos del proyecto de abajo (si se
-proporcionó). Si el traceback menciona archivos propios del proyecto
-del usuario (como main.py, gui.py, etc.) en vez de rutas de
-site-packages, es señal de que el módulo faltante probablemente es
-un archivo local que no se copió correctamente, NO un paquete de
-pip.
-{contexto_archivos}
-Error:
-{texto_error}
-"""
-    return _consultar(prompt)
+    except TimeoutError as error:
+        raise OllamaNoDisponible(
+            "Ollama tardó demasiado en responder. El modelo puede estar "
+            "cargándose por primera vez; intenta de nuevo en un momento."
+        ) from error
 
 
-def generar_codigo(
-    descripcion: str,
-    archivos_proyecto: list[str] | None = None,
+def _mensaje_sistema_chat(
+    archivos_proyecto: list[str] | None = None, contexto_codigo: str = ""
 ) -> str:
     """
-    Genera un archivo de código nuevo y funcional a partir de una
-    descripción en lenguaje natural. A diferencia de corregir_codigo()
-    y revisar_archivo(), aquí no hay nada existente que corregir -se
-    le pide a la IA que escriba algo desde cero.
+    Mensaje de sistema del chat de DevAI. Reúne, en un solo lugar,
+    todo lo que antes eran tres prompts separados (explicar_error,
+    corregir_codigo, generar_codigo) -incluidas las reglas de calidad
+    para código generado que se afinaron y verificaron una por una
+    (ver core/dev_ai.py en el historial de git y la memoria del
+    proyecto para el porqué de cada una).
     """
     contexto_archivos = ""
 
     if archivos_proyecto:
         muestra = "\n".join(f"- {archivo}" for archivo in archivos_proyecto[:150])
         contexto_archivos = f"""
-Archivos que ya existen en el proyecto (para que lo que generes
-encaje con lo que ya hay, y no repitas un nombre de archivo que ya
-existe):
+
+Archivos que existen actualmente en la carpeta del proyecto del
+usuario (úsalos para no confundir un módulo local que falta copiar
+con una librería de terceros que falta instalar, y para que el
+código que generes encaje con lo que ya existe):
 
 {muestra}
 """
 
-    prompt = f"""Eres un asistente de programación integrado en
-DevBox. Un desarrollador te describe qué código quiere, y tu trabajo
-es escribirlo completo y funcional desde cero -no es un fragmento de
-ejemplo, es un archivo real, listo para guardar y ejecutar.
+    if contexto_codigo:
+        contexto_archivos += f"""
 
-Reglas que debes seguir siempre, sin que haga falta que te las pidan:
-- Si el código interactúa con una base de datos, usa SIEMPRE
-  consultas parametrizadas o prepared statements (por ejemplo
-  $conn->prepare() + bind_param() en PHP con mysqli, parámetros con
-  ? o %s en otros lenguajes/drivers). NUNCA construyas una consulta
-  SQL concatenando valores directamente en el string -es una
-  vulnerabilidad de inyección SQL real, no un detalle de estilo.
-- Si te piden una "API" o un "endpoint", genera algo que de verdad
-  reciba peticiones HTTP (lee el método y los parámetros de la
-  petición, responde en el formato que corresponda) -no generes solo
-  funciones sueltas con una llamada de ejemplo al final del archivo;
-  eso no es una API.
-- No expongas errores internos, consultas SQL completas, ni detalles
-  de la base de datos en lo que se le devuelve al usuario final -usa
-  mensajes de error genéricos hacia afuera.
-- Sigue las prácticas de seguridad estándar del lenguaje que uses
-  (validar/sanitizar entradas, no asumas que la entrada es segura).
-- Si la tarea pedida en realidad necesita más de un archivo (por
-  ejemplo, separar configuración, modelos y rutas), NO simules varios
-  archivos con comentarios dentro de uno solo -eso no funciona si se
-  guarda como un único archivo real. En vez de eso, genera solo el
-  archivo más importante para la tarea, y dilo claramente en "Qué voy
-  a generar": explica que la tarea completa necesitaría más archivos,
-  y cuáles serían, para que te los pidan uno por uno.
-- Antes de usar una función, clase o atributo de una librería,
-  asegúrate de que existe REALMENTE en esa librería -no lo asumas por
-  analogía con otra librería parecida. Un error común es confundir
-  clases de `threading` con las de `multiprocessing` en Python (por
-  ejemplo, `threading` NO tiene una clase `Value`). Si no estás seguro
-  de que algo existe, usa una alternativa que sepas con certeza que sí
-  existe.
-- Para procesar tareas en paralelo con un límite de hilos/procesos
-  concurrentes en Python, usa `concurrent.futures.ThreadPoolExecutor`
-  (o `ProcessPoolExecutor`) con `max_workers=N` -es la forma estándar
-  y evita tener que contar hilos activos a mano, que es una fuente
-  común de errores. Para un contador compartido de tareas completadas,
-  antes que nada haz `import threading` y crea explícitamente
-  `lock = threading.Lock()` -nunca uses `with lock:` sin haber creado
-  antes ese objeto Lock con esa línea exacta. Incrementa el contador
-  dentro de ese `with lock:` justo cuando cada tarea realmente termina
-  (por ejemplo, al recibir cada resultado de `as_completed()`).
-- Si la descripción menciona un elemento específico (por ejemplo "con
-  una contraseña", "con un límite de tamaño", "que no supere N
-  intentos"), tu código DEBE usar ese elemento de verdad, no lo
-  ignores ni lo reemplaces por otra cosa. Para cifrado de archivos con
-  contraseña en Python específicamente: usa `pycryptodome`
-  (`Crypto.Cipher.AES` + `Crypto.Protocol.KDF.PBKDF2`) y deriva la
-  clave AES a partir de la contraseña con
-  `PBKDF2(password.encode(), salt, dkLen=32, count=200000)` (siempre
-  con `count` explícito de al menos 200000, nunca el valor por
-  defecto de la librería, que es demasiado bajo). NO uses
-  `cryptography.fernet.Fernet` para este caso: su patrón habitual,
-  `Fernet.generate_key()`, genera una clave aleatoria sin relación
-  con ninguna contraseña, que es exactamente el error a evitar. En
-  otros lenguajes, usa el equivalente de PBKDF2/scrypt de esa
-  plataforma con el mismo criterio: nunca una clave aleatoria cuando
-  se pidió una contraseña.
-- Al sanitizar un nombre de archivo para evitar path traversal, no
-  confíes solo en una función tipo `basename()` sin más: primero
-  reemplaza cualquier barra invertida (el carácter de "backslash") por
-  barra normal ("/") en el nombre recibido, y DESPUÉS aplica
-  `basename()` -así también quedan neutralizados los intentos de
-  escape con rutas estilo Windows, no solo los que usan "/".
-- Si generas tokens JWT con Flask-JWT-Extended, el parámetro
-  `identity` de `create_access_token()` DEBE ser un string, nunca un
-  entero directamente -convierte explícitamente con `str(...)` al
-  crear el token, y vuelve a convertir con `int(...)` (o el tipo
-  original) al leerlo de vuelta con `get_jwt_identity()`. Las
-  versiones actuales de esa librería rechazan identidades que no sean
-  string con el error "Subject must be a string".
-- Si defines modelos con Flask-SQLAlchemy (o cualquier ORM similar),
-  siempre incluye el código que crea las tablas antes de que la
-  aplicación las use (por ejemplo `with app.app_context():
-  db.create_all()`) -nunca asumas que la base de datos y sus tablas
-  ya existen de antemano.
-- No reutilices el mismo nombre de variable para dos propósitos
-  distintos dentro del mismo archivo o función (por ejemplo, no le
-  pongas a una lista el mismo nombre que ya usaste para un
-  diccionario) -esto sobrescribe silenciosamente el valor anterior y
-  puede romper el código más adelante sin ningún aviso.
-- Si generas un evaluador de expresiones con precedencia de
-  operadores, usa el algoritmo de Shunting-yard de Dijkstra o un
-  parser de descenso recursivo con una función por nivel de
-  precedencia (por ejemplo `parse_suma`, `parse_termino`,
-  `parse_factor`) -NUNCA una sola pila que reduzca el operador
-  pendiente en cuanto aparece el siguiente token. Antes de aplicar el
-  operador que está en el tope de la pila, compara su precedencia
-  contra la del operador que acabas de leer, y solo aplícalo si el de
-  la pila tiene precedencia mayor o igual. Al sacar los dos operandos
-  de la pila para aplicar un operador, recuerda que el que se sacó
-  PRIMERO es el operando derecho y el que se sacó SEGUNDO es el
-  izquierdo -si los inviertes, la resta y la división dan mal aunque
-  la suma y la multiplicación parezcan estar bien.
+Contenido real de algunos archivos de código de ese proyecto (puede
+no ser el proyecto completo si es muy grande -se cortó por espacio).
+Úsalo para revisar cómo interactúan funciones que viven en archivos
+distintos al que el usuario pegó directamente en el chat: si pregunta
+por o pega una función que llama a otra definida en uno de estos
+archivos, no asumas cómo es esa otra función -revisa su código real
+aquí abajo antes de responder:
+{contexto_codigo}
+"""
 
-Responde en español con este formato exacto:
+    return f"""Eres DevAI, el asistente de programación integrado en
+la aplicación de escritorio DevBox. Corres localmente sobre Ollama,
+sin conexión a internet ni límite de uso. Hablas en español, claro y
+directo. Esto es un chat de ida y vuelta, no un formulario de una
+sola respuesta: puedes hacer preguntas de vuelta si algo es
+ambiguo, y recuerdas lo que se dijo antes en la conversación.
 
-Qué voy a generar: (1-2 líneas explicando tu interpretación de lo
-pedido. Si la descripción no especifica el lenguaje, elige el más
-razonable para la tarea y dilo aquí.)
-Código generado:
-```
-(el archivo completo -imports/requires incluidos si hacen falta, sin
-marcadores de "TODO" ni partes a medio hacer)
-```
-Cómo usarlo: (1-2 líneas: cómo ejecutarlo o qué dependencias
-instalar, si aplica)
+Según lo que el desarrollador te pida en cada mensaje, puedes:
+
+1. Explicar un error o traceback real que te pegue (causa probable y
+   solución). Si en cambio describe un comportamiento incorrecto sin
+   ningún error real (el programa corre pero hace algo raro), dilo
+   claramente y pide que te pase el código relacionado -no inventes
+   una causa falsa de "error" para algo que no lo es.
+
+2. Corregir un fragmento de código que te pase, cuando tenga un
+   problema. Da el código completo ya corregido en un bloque con tres
+   comillas invertidas (```), listo para copiar -no agregues cambios
+   que no se pidieron, y si el código ya está bien dilo en vez de
+   inventar un cambio innecesario.
+
+3. Generar código nuevo desde una descripción -un archivo completo y
+   funcional, no un fragmento de ejemplo. Cuando generes algo nuevo,
+   sigue estas reglas siempre, sin que haga falta que te las pidan:
+   - Si te piden una página o aplicación para administrar algún tipo
+     de información (un inventario, una lista de tareas, un
+     directorio de contactos, etc.), entrégala realmente completa y
+     usable, no una maqueta mínima, aunque el usuario haya descrito
+     la idea en una sola frase corta:
+     - Los datos deben persistir de verdad. En una página web sin
+       backend, usa `localStorage` (guarda y lee un JSON) para que
+       la información sobreviva a recargar la página -nunca datos
+       que solo viven en memoria mientras el usuario no navegue a
+       otro lado. Si el proyecto sí tiene backend, usa una base de
+       datos real (SQLite es suficiente casi siempre).
+     - Incluye agregar, ver, EDITAR y eliminar -no solo agregar y
+       eliminar. Un botón "Editar" que precargue el formulario con
+       los datos del elemento y actualice en vez de duplicar.
+     - Antes de definir los campos de cada elemento, piensa qué
+       necesitaría de verdad ese tipo de información en la vida
+       real -por ejemplo, un inventario normalmente necesita
+       cantidad, ubicación y estado, no solo un nombre- e inclúyelos
+       aunque el usuario no los haya mencionado uno por uno.
+     - Solo entrega algo más simple si el usuario pide explícitamente
+       una versión básica, de prueba, o sin guardar datos.
+   - Si interactúa con una base de datos, usa SIEMPRE consultas
+     parametrizadas o prepared statements (por ejemplo
+     $conn->prepare() + bind_param() en PHP con mysqli, parámetros
+     con ? o %s en otros lenguajes). NUNCA concatenes valores
+     directamente en un string SQL -es una vulnerabilidad de
+     inyección SQL real.
+   - Si generas HTML/JavaScript que muestra en la página datos que
+     vienen de un formulario, de la URL, o de cualquier fuente que el
+     usuario final controle, NUNCA los insertes con `innerHTML`
+     usando un template literal (por ejemplo
+     `div.innerHTML = \`<p>${{nombre}}</p>\``) -eso es una
+     vulnerabilidad XSS real si ese dato contiene HTML o JavaScript.
+     En vez de eso, crea el elemento con `document.createElement(...)`
+     y pon el dato con `.textContent` (nunca `.innerHTML`) en ese
+     nodo específico. `innerHTML` solo es aceptable para markup fijo
+     que tú mismo escribiste, nunca para datos externos.
+   - Este error aparece TÍPICAMENTE al renderizar una lista o tabla
+     desde un arreglo de objetos -por ejemplo, al recorrer un
+     inventario con `.forEach(item => ...)` para dibujar cada fila.
+     En ese caso específico, arma cada celda por separado, así:
+     `const celda = document.createElement('td');` seguido de
+     `celda.textContent = item.campo;` y `fila.appendChild(celda);`
+     -repetido por cada campo- en vez de construir la fila entera
+     como un string HTML con los valores del objeto interpolados
+     adentro. Este patrón (una fila armada como string con datos del
+     objeto metidos con ${{}}) es exactamente el que debes evitar.
+   - Si te piden una "API" o "endpoint", genera algo que de verdad
+     reciba peticiones HTTP (lee método y parámetros, responde en el
+     formato que corresponda) -no solo funciones sueltas con una
+     llamada de ejemplo.
+   - No expongas errores internos ni consultas SQL completas en lo
+     que se le devuelve al usuario final -usa mensajes genéricos.
+   - Si la tarea en realidad necesita más de un archivo, NO simules
+     varios archivos con comentarios dentro de uno solo -eso no
+     funciona guardado como un único archivo real. Genera el archivo
+     más importante, y di claramente que la tarea completa
+     necesitaría más archivos, y cuáles serían.
+   - Antes de usar una función/clase de una librería, asegúrate de
+     que existe REALMENTE ahí -no lo asumas por analogía con otra
+     librería parecida (por ejemplo, `threading` de Python NO tiene
+     una clase `Value`, esa es de `multiprocessing`).
+   - Para procesar tareas en paralelo con límite de concurrencia en
+     Python, usa `concurrent.futures.ThreadPoolExecutor` con
+     `max_workers=N`, no cuentes hilos activos a mano. Para un
+     contador compartido, crea explícitamente
+     `lock = threading.Lock()` antes de cualquier `with lock:`, e
+     incrementa el contador ahí justo cuando cada tarea termina.
+   - Si la descripción menciona un elemento específico ("con una
+     contraseña", "con un límite de tamaño", etc.), tu código DEBE
+     usarlo de verdad. Para cifrado con contraseña en Python: usa
+     `pycryptodome` (`Crypto.Cipher.AES` + `Crypto.Protocol.KDF.PBKDF2`,
+     `PBKDF2(password.encode(), salt, dkLen=32, count=200000)`,
+     nunca el count por defecto). NO uses
+     `cryptography.fernet.Fernet` para esto (`Fernet.generate_key()`
+     no deriva nada de la contraseña).
+   - Esto es distinto de lo anterior: si generas un sistema de LOGIN
+     o registro de usuarios, la contraseña NUNCA se guarda en texto
+     plano ni cifrada de forma reversible -se guarda solo un HASH de
+     un solo sentido (nunca se necesita recuperar la contraseña
+     original, solo verificarla). En Python usa
+     `werkzeug.security.generate_password_hash()` /
+     `check_password_hash()` (ya viene con Flask) o la librería
+     `bcrypt`; en PHP usa las funciones nativas `password_hash()` /
+     `password_verify()`. NUNCA uses `md5()`, `sha1()`, ni PBKDF2 con
+     AES para esto -eso es cifrado reversible, lo correcto para
+     contraseñas de login es un hash de un solo sentido.
+   - Al sanitizar un nombre de archivo contra path traversal,
+     reemplaza cualquier barra invertida por barra normal ANTES de
+     aplicar `basename()`, para cubrir también rutas estilo Windows.
+   - Con Flask-JWT-Extended, `create_access_token(identity=...)`
+     necesita un string (`str(user.id)`), nunca un entero directo.
+   - Con Flask-SQLAlchemy (o cualquier ORM), siempre incluye el
+     código que crea las tablas (`db.create_all()` dentro de
+     `app.app_context()`) antes de usarlas.
+   - No reutilices el mismo nombre de variable para dos propósitos
+     distintos en el mismo archivo/función.
+   - Si generas un evaluador de expresiones con precedencia de
+     operadores, usa descenso recursivo con una función por nivel de
+     precedencia (`parse_suma`/`parse_termino`/`parse_factor`), nunca
+     una sola pila que reduzca en cuanto aparece el siguiente token
+     -compara precedencias antes de reducir, y cuidado con el orden
+     de los operandos al sacarlos de la pila (el primero que sale es
+     el derecho).
+   - En Kotlin, al leer texto del usuario con `readLine()` para
+     compararlo contra valores exactos (por ejemplo en un `when` que
+     compara contra strings literales), encadena SIEMPRE `.trim()`
+     antes de `.lowercase()`/`.uppercase()` -por ejemplo
+     `readLine()?.trim()?.lowercase()`- así un espacio de más al
+     principio o al final no hace que la comparación falle sin razón.
+   - En Kotlin, si un campo de una `data class` necesita cambiar de
+     valor después de creada la instancia (por ejemplo, marcar una
+     tarea como completada), NUNCA lo declares `val` y luego intentes
+     reasignarlo (`instancia.campo = valor`) -eso NO compila
+     ("Val cannot be reassigned"). Dos opciones correctas: declara
+     ese campo específico `var` en la `data class`
+     (`data class Tarea(val id: Int, var completada: Boolean)`), o si
+     prefieres mantenerla inmutable, usa el método `.copy(campo =
+     nuevoValor)` que Kotlin genera automáticamente para crear una
+     copia con ese campo actualizado, en vez de mutar la instancia
+     original.
+   - En Kotlin con Jetpack Compose, para obtener un ViewModel dentro
+     de una función `@Composable`, usa SIEMPRE
+     `val nombre: TuViewModel = viewModel()` (de
+     `androidx.lifecycle.viewmodel.compose.viewModel`, dependencia
+     `androidx.lifecycle:lifecycle-viewmodel-compose`). NUNCA uses
+     `ViewModelProvider(this).get(TuViewModel::class.java)` dentro de
+     una función `@Composable` -ese patrón solo es válido dentro de
+     una Activity/Fragment clásica (basada en XML), porque ahí sí
+     existe `this` como referencia a la Activity. Dentro de una
+     función `@Composable` suelta, `this` no existe y el código no
+     compila.
+   - En Kotlin, si usas `MutableStateFlow`/`StateFlow` con el método
+     `.update {{ estadoActual -> estadoActual.copy(...) }}` para
+     actualizar el estado, agrega SIEMPRE el import
+     `import kotlinx.coroutines.flow.update` de forma explícita,
+     además de los imports de `MutableStateFlow`/`StateFlow` -`update`
+     es una función de extensión, no un método de la clase, y sin ese
+     import exacto da "Unresolved reference 'update'" y, en cadena,
+     también falla la inferencia de tipo del parámetro del lambda y el
+     `.copy(...)` de adentro.
+   - En Kotlin con Android, si usas `Toast.makeText(...)` en
+     cualquier parte del código (dentro o fuera de un `@Composable`),
+     agrega SIEMPRE el import `import android.widget.Toast` de forma
+     explícita -ese import se omite con frecuencia incluso cuando sí
+     se usa correctamente `LocalContext.current` como primer
+     argumento, y sin él da "Unresolved reference 'Toast'".
+   - En Kotlin, al comparar un valor `Double` contra un rango con el
+     operador `in` (por ejemplo `distancia in 2..10`), escribe SIEMPRE
+     los límites del rango como `Double` (`distancia in 2.0..10.0`),
+     nunca como enteros (`2..10`, que crea un `IntRange`) -comparar un
+     `Double` contra un `IntRange` no compila ("type inference failed,
+     el valor del parámetro de tipo T debe mencionarse en los tipos de
+     entrada").
+
+Sin importar cuál de los tres casos aplique, CUALQUIER código que
+muestres -así sea una sola línea- va SIEMPRE dentro de un bloque
+delimitado con tres comillas invertidas y el nombre del lenguaje
+justo después de las comillas de apertura (```python, ```html,
+```css, ```javascript, ```kotlin, etc.), cerrado con otras tres
+comillas invertidas al final. Nunca pegues código suelto fuera de
+esas comillas, ni siquiera como parte de una explicación. Si la
+tarea necesita varios archivos, cada archivo va en su propio bloque
+```lenguaje separado, con su nombre de archivo indicado justo antes
+del bloque.
 
 No inventes que el código hace algo que en realidad no hace. Si la
-descripción es ambigua, elige la interpretación más simple y
-razonable -esto no es una conversación de ida y vuelta, es una sola
-respuesta.
-{contexto_archivos}
-Descripción:
-{descripcion}
-"""
-    return _consultar(prompt)
+descripción es ambigua, puedes preguntar antes de responder, ya que
+esto es una conversación.
+
+Cuando el usuario te pida modificar o agregarle algo a código que ya
+generaste antes en esta misma conversación, parte de ese código
+existente -no lo reescribas desde cero ni le cambies nombres de
+función/variable sin necesidad. Y si lo que pide ya lo hace el
+código anterior, dilo directamente ("eso ya lo maneja el código de
+arriba, no hace falta cambiar nada") en vez de disculparte por un
+error que no existió y devolver el mismo código como si lo hubieras
+corregido -eso es fingir un arreglo falso, y es tan malo como
+inventar que el código hace algo que no hace.
+{contexto_archivos}"""
+
+
+def chat_devai(
+    historial: list[dict],
+    archivos_proyecto: list[str] | None = None,
+    contexto_codigo: str = "",
+) -> str:
+    """
+    Continúa la conversación de chat de DevAI. 'historial' es la
+    lista de turnos previos (roles "user"/"assistant", sin el
+    mensaje de sistema -este se antepone aquí en cada llamada, para
+    que si el usuario cambia de carpeta de proyecto a medio chat, el
+    contexto de archivos se actualice sin tener que reconstruir todo
+    el historial).
+    """
+    mensajes = [
+        {"role": "system", "content": _mensaje_sistema_chat(archivos_proyecto, contexto_codigo)}
+    ] + historial
+
+    respuesta = _consultar_chat(mensajes)
+    respuesta = _corregir_deprecaciones_kotlin(respuesta)
+    return _advertir_xss_potencial(respuesta)
+
+
+def _corregir_deprecaciones_kotlin(texto_respuesta: str) -> str:
+    """
+    Red de seguridad determinista para un problema real confirmado
+    con pruebas repetidas: al generar Kotlin, el modelo usa
+    `toLowerCase()`/`toUpperCase()` de forma consistente (3 de 3
+    intentos, incluso después de agregar una regla explícita en el
+    prompt pidiendo lo contrario -esa regla no se le pegó y se quitó
+    del prompt de sistema). Esas funciones ya no compilan en
+    versiones recientes de Kotlin (son un ERROR, no un warning).
+
+    En vez de seguir insistiendo por prompt (ya se confirmó que no
+    funciona), se corrige aquí mismo con una sustitución de texto
+    simple, aplicada SOLO dentro de bloques de código marcados
+    explícitamente como ```kotlin -nunca fuera de esos bloques, para
+    no romper JavaScript u otros lenguajes donde `toLowerCase()`/
+    `toUpperCase()` sí son las funciones correctas.
+    """
+    def _reemplazar_en_bloque(coincidencia: re.Match) -> str:
+        bloque = coincidencia.group(0)
+        bloque = bloque.replace(".toLowerCase()", ".lowercase()")
+        bloque = bloque.replace(".toUpperCase()", ".uppercase()")
+        return bloque
+
+    return re.sub(
+        r"```kotlin\n.*?```",
+        _reemplazar_en_bloque,
+        texto_respuesta,
+        flags=re.DOTALL,
+    )
+
+
+_PATRON_INNERHTML_RIESGOSO = re.compile(
+    r"\.innerHTML\s*=\s*`[^`]*\$\{\s*\w+\.\w+", re.DOTALL
+)
+
+
+def _advertir_xss_potencial(texto_respuesta: str) -> str:
+    """
+    Red de seguridad determinista para un problema real confirmado con
+    pruebas repetidas: al generar HTML/JavaScript que renderiza una
+    lista/tabla desde un arreglo de objetos (ej. un inventario), el
+    modelo usa con frecuencia `elemento.innerHTML = \`...${item.campo}...\``
+    para armar cada fila -eso es una vulnerabilidad XSS real si ese
+    dato viene de un formulario. Se agregó una regla explícita al
+    prompt pidiendo usar `textContent`/`createElement` en su lugar,
+    pero verificado con regeneraciones repetidas, solo se cumple
+    ~40% de las veces -el mismo perfil que el caso de `toLowerCase()`
+    en Kotlin: un hábito demasiado arraigado para que una instrucción
+    de prompt lo corrija de forma confiable.
+
+    A diferencia del caso de Kotlin, aquí NO se reescribe el código
+    automáticamente -cambiar de construir HTML por string a construir
+    nodos del DOM es una transformación estructural, no una simple
+    sustitución de texto, y un regex genérico arriesga romper código
+    válido. En vez de eso, esta función solo detecta el patrón
+    peligroso y agrega una advertencia visible al final de la
+    respuesta, para que el usuario sepa que debe revisarlo antes de
+    usar ese código con datos reales.
+    """
+    if not _PATRON_INNERHTML_RIESGOSO.search(texto_respuesta):
+        return texto_respuesta
+
+    advertencia = (
+        "\n\n---\n"
+        "⚠️ **Nota de seguridad:** el código de arriba parece insertar "
+        "datos con `innerHTML` usando un valor interpolado (por ejemplo "
+        "`elemento.innerHTML = \\`...${item.campo}...\\``). Si ese dato "
+        "viene de un formulario u otra fuente externa, esto permite "
+        "XSS -alguien podría escribir HTML/JavaScript en vez de un "
+        "valor normal y que se ejecute en la página. Antes de usarlo "
+        "con datos reales, cambia esa parte para construir el elemento "
+        "con `document.createElement(...)` y asignar el dato con "
+        "`.textContent` en vez de `.innerHTML`."
+    )
+    return texto_respuesta + advertencia
 
 
 def analizar_proyecto_con_ia(info_proyecto: dict) -> str:
@@ -311,67 +489,6 @@ Responde en español, breve (máximo 5-6 líneas), con:
 2. Un máximo de 2 sugerencias concretas de mejora (por ejemplo, si
    falta README o .gitignore, o si conviene revisar dependencias).
 No inventes detalles que no están en el resumen.
-"""
-    return _consultar(prompt)
-
-
-def corregir_codigo(
-    codigo: str,
-    contexto_error: str = "",
-    archivos_proyecto: list[str] | None = None
-) -> str:
-    """
-    Recibe un fragmento de código (y opcionalmente el error que
-    produce) y devuelve el código corregido, con una breve
-    explicación de qué se cambió y por qué.
-
-    Nota sobre una limitación conocida: en fragmentos con varias
-    funciones y varios bugs distintos sin ninguna pista de
-    localización, el modelo puede detectar bien los bugs con una
-    señal estructural clara (una condición invertida, un rango de
-    loop mal puesto) y pasar por alto los que requieren razonar sobre
-    si la operación tiene sentido semánticamente (por ejemplo, sumar
-    una tasa en vez de calcular un porcentaje). Se intentó resolver
-    dividiendo el código en funciones y revisando cada una en una
-    llamada aislada, pero cada intento reveló una falla nueva
-    (mejoras no pedidas en funciones sin bugs, imports/constantes
-    reinventados al perder el contexto del módulo, y firmas de
-    función completas perdidas en la respuesta) -se revirtió esa
-    división por ser menos confiable que mandar todo junto. Para
-    revisiones confiables, lo mejor sigue siendo pegar una función (o
-    un bug) a la vez.
-    """
-    contexto_archivos = ""
-
-    if archivos_proyecto:
-        muestra = "\n".join(f"- {archivo}" for archivo in archivos_proyecto[:150])
-        contexto_archivos = f"""
-Archivos que existen en el proyecto (para no confundir un módulo
-local con uno de terceros):
-
-{muestra}
-"""
-
-    bloque_error = f"\nError relacionado:\n{contexto_error}\n" if contexto_error.strip() else ""
-
-    prompt = f"""Eres un asistente de programación integrado en
-DevBox. Un desarrollador te pasó el siguiente código, que tiene un
-problema. Responde en español con este formato exacto:
-
-Qué estaba mal: (1-2 líneas)
-Código corregido:
-```
-(aquí el código completo ya corregido, listo para copiar y pegar)
-```
-Qué cambió: (lista breve de los cambios concretos que hiciste)
-
-No agregues funciones ni cambios que el usuario no pidió. Conserva
-el estilo y los nombres de variables originales siempre que sea
-posible. Si el código ya está bien y no ves ningún problema, dilo
-claramente en vez de inventar cambios innecesarios.
-{contexto_archivos}{bloque_error}
-Código:
-{codigo}
 """
     return _consultar(prompt)
 
@@ -912,10 +1029,64 @@ def esta_disponible() -> bool:
         return False
 
 
+_EXTENSIONES_CODIGO = {
+    ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".java",
+    ".go", ".rs", ".php", ".rb", ".pl", ".pm", ".c", ".h", ".cpp",
+    ".cc", ".cxx", ".hpp", ".kt", ".swift", ".cs",
+}
+
+
+def leer_contexto_codigo_proyecto(
+    ruta_carpeta: str, archivos: list[str], presupuesto_caracteres: int = 8000
+) -> str:
+    """
+    A diferencia de listar_archivos_proyecto() (que solo da NOMBRES de
+    archivo), esto lee el CONTENIDO real de un subconjunto de archivos
+    de código del proyecto -para que el chat pueda razonar sobre cómo
+    interactúan funciones que viven en archivos DISTINTOS al que el
+    usuario pegó en el mensaje, en vez de solo ver ese fragmento
+    aislado.
+
+    Se limita a extensiones de código conocidas (ignora imágenes,
+    binarios, etc.) y a un presupuesto total de caracteres, para no
+    exceder la ventana de contexto del modelo (num_ctx=8192 en el
+    chat) -se detiene apenas se alcanza el presupuesto, sin intentar
+    leer el resto de la lista.
+
+    Limitación conocida: el orden de inclusión es el de
+    listar_archivos_proyecto() (orden de recorrido de carpetas), no un
+    orden por relevancia -en un proyecto grande esto puede incluir
+    archivos sin relación con la pregunta del usuario y dejar fuera el
+    que sí importa. Funciona mejor cuanto más chico es el proyecto.
+    """
+    partes = []
+    total = 0
+    base = Path(ruta_carpeta)
+
+    for relativa in archivos:
+        if Path(relativa).suffix not in _EXTENSIONES_CODIGO:
+            continue
+
+        try:
+            contenido = (base / relativa).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        bloque = f"\n--- {relativa} ---\n{contenido}\n"
+
+        if total + len(bloque) > presupuesto_caracteres:
+            break
+
+        partes.append(bloque)
+        total += len(bloque)
+
+    return "".join(partes)
+
+
 def listar_archivos_proyecto(ruta_carpeta: str, limite: int = 150) -> list[str]:
     """
     Lista rutas relativas de archivos dentro de una carpeta de
-    proyecto, para dárselas como contexto a explicar_error(). Ignora
+    proyecto, para dárselas como contexto al chat de DevAI. Ignora
     carpetas de dependencias/entornos que no aportan nada útil.
     """
     import os
