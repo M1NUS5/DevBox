@@ -1,0 +1,7 @@
+# Dependencias para correr DevBox (main.py / gui.py).
+# Instalar con: pip install -r requirements.txt
+customtkinter==6.0.0
+pillow==12.3.0
+
+# --- Solo si vas a empacar la app como .app/.dmg (no hace falta para correrla) ---
+# pip install -r requirements.txt -r requirements-build.txt

@@ -1436,9 +1436,21 @@
 		<data>
 		9VwoDn1wHXhkv7T6MKWgHq85tSk=
 		</data>
+		<key>Resources/assets/screenshots/dashboard.png</key>
+		<data>
+		2Hf/qY40rgH6B1U2bzmWjZBG/RI=
+		</data>
+		<key>Resources/assets/screenshots/devai.png</key>
+		<data>
+		D8s15jFRHhoNejHZeobSp/tWKXA=
+		</data>
+		<key>Resources/assets/screenshots/lenguajes.png</key>
+		<data>
+		bbTwtphLy0/9RyWBwcuQ6N3LFPI=
+		</data>
 		<key>Resources/base_library.zip</key>
 		<data>
-		l9k8uqjwQ8aLte1AjnuMSAxLzTI=
+		iJQFqFNKDFETJF2lFJqQXH8diac=
 		</data>
 		<key>Resources/customtkinter/assets/fonts/CustomTkinter_shapes_font.otf</key>
 		<data>
@@ -4791,11 +4803,32 @@
 			Xai8FJkFNmuej2n/nI2oTzvniwF231vrBVSACVsIbhE=
 			</data>
 		</dict>
+		<key>Resources/assets/screenshots/dashboard.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			ca/CkyKprJOs2knhNLzqMk7QwEg9rMYTmuI6fZjBZbw=
+			</data>
+		</dict>
+		<key>Resources/assets/screenshots/devai.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			WJTTOq9Sw1E651fNXjcjUD22RbCluLZ82UHwPTDwSDQ=
+			</data>
+		</dict>
+		<key>Resources/assets/screenshots/lenguajes.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			bRbNlrPPE+78HD0Mbq+xvAZkBQwn5AfzK7tyIuV4hUo=
+			</data>
+		</dict>
 		<key>Resources/base_library.zip</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			uxPk0SdD7VSTYFqSyp4hkY69Aa973PO5N1YjBVOlhnU=
+			4tPw8JKXm5XRvOBoiggwgVe7o25/X09wVMWLy1F66jY=
 			</data>
 		</dict>
 		<key>Resources/customtkinter/assets/fonts/CustomTkinter_shapes_font.otf</key>

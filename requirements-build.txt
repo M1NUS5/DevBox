@@ -1,0 +1,4 @@
+# Dependencias extra solo para empacar DevBox como .app/.dmg con PyInstaller.
+# No se necesitan para correr la app desde el código fuente.
+# Instalar con: pip install -r requirements.txt -r requirements-build.txt
+pyinstaller==6.22.3

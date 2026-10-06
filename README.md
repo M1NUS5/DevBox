@@ -338,8 +338,33 @@ con límites reales de razonamiento:
 ## Requisitos
 
 - macOS
-- Python 3.12+ (entorno virtual propio del proyecto en `.venv/`)
-- [Ollama](https://ollama.com) con el modelo `qwen2.5-coder:7b` para usar DevAI
+- Python 3.12+
+- [Ollama](https://ollama.com) con el modelo `qwen2.5-coder:7b` para usar DevAI:
+  ```
+  brew install ollama
+  brew services start ollama
+  ollama pull qwen2.5-coder:7b
+  ```
+
+**Opcional** -si están instalados, "Revisar archivo" en DevAI usa el
+verificador de sintaxis nativo de cada lenguaje (más preciso que pedírselo
+a la IA a ciegas); si no, cae a un modo genérico menos preciso para ese
+lenguaje. No hace falta instalar ninguno para que DevBox funcione:
+Node.js (`node`), PHP (`php`), Go (`gofmt`), Ruby (`ruby`), Perl (`perl`),
+y un compilador de C/C++ (`gcc`/`g++`, ya viene con Xcode Command Line
+Tools en macOS).
+
+## Instalación
+
+```
+cd DevBox
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+(El repositorio ya trae su propio `.venv/` con todo instalado, así que este
+paso es solo necesario si lo clonas en un equipo distinto o prefieres armar
+el entorno desde cero.)
 
 ## Uso
 
